@@ -166,6 +166,7 @@ export const useRoom = (config: UIConfig): UseRoom => {
     const host = React.useRef<Record<string, RTCPeerConnection>>({});
     const client = React.useRef<Record<string, RTCPeerConnection>>({});
     const stream = React.useRef<MediaStream>(undefined);
+    const hostSID = React.useRef<string | undefined>(undefined); // SFU: session ID for the upload PC
 
     const [state, setState] = React.useState<RoomState>(false);
 
@@ -205,15 +206,44 @@ export const useRoom = (config: UIConfig): UseRoom => {
                             if (!stream.current) {
                                 return;
                             }
-                            hostSession({
-                                sid: event.payload.id,
-                                stream: stream.current!,
-                                ice: event.payload.iceServers,
-                                send,
-                                done: () => delete host.current[event.payload.id],
-                            }).then((peer) => {
-                                host.current[event.payload.id] = peer;
-                            });
+                            if (event.payload.mode === 'sfu') {
+                                // SFU mode: create upload-only PC, add tracks, wait for server's offer.
+                                const sid = event.payload.id;
+                                hostSID.current = sid;
+                                const pc = new RTCPeerConnection({
+                                    ...relayConfig,
+                                    iceServers: event.payload.iceServers,
+                                });
+                                stream.current.getTracks().forEach((track) =>
+                                    pc.addTrack(track, stream.current!)
+                                );
+                                pc.onicecandidate = (ev) => {
+                                    if (!ev.candidate) return;
+                                    send({type: 'hostice', payload: {sid, value: ev.candidate}});
+                                };
+                                pc.onconnectionstatechange = () => {
+                                    if (
+                                        pc.connectionState === 'closed' ||
+                                        pc.connectionState === 'disconnected' ||
+                                        pc.connectionState === 'failed'
+                                    ) {
+                                        pc.close();
+                                        delete host.current[sid];
+                                    }
+                                };
+                                host.current[sid] = pc;
+                            } else {
+                                // P2P mode: host creates and sends the offer.
+                                hostSession({
+                                    sid: event.payload.id,
+                                    stream: stream.current!,
+                                    ice: event.payload.iceServers,
+                                    send,
+                                    done: () => delete host.current[event.payload.id],
+                                }).then((peer) => {
+                                    host.current[event.payload.id] = peer;
+                                });
+                            }
                             return;
                         case 'clientsession':
                             const {id: sid, peer} = event.payload;
@@ -262,18 +292,46 @@ export const useRoom = (config: UIConfig): UseRoom => {
                             return;
                         case 'hostoffer':
                             (async () => {
-                                await client.current[event.payload.sid]?.setRemoteDescription(
-                                    event.payload.value
-                                );
-                                const answer =
-                                    await client.current[event.payload.sid]?.createAnswer();
-                                await client.current[event.payload.sid]?.setLocalDescription(
-                                    answer
-                                );
-                                send({
-                                    type: 'clientanswer',
-                                    payload: {sid: event.payload.sid, value: answer},
-                                });
+                                const sid = event.payload.sid;
+                                if (host.current[sid]) {
+                                    // SFU mode: server sent its recvonly offer to the sharer browser.
+                                    const pc = host.current[sid];
+                                    await pc.setRemoteDescription(event.payload.value);
+                                    // Apply codec preference on the sender transceiver once remote
+                                    // description is set (transceiver direction is known at this point).
+                                    const preferCodec = resolveCodecPlaceholder(loadSettings().preferCodec);
+                                    if (preferCodec) {
+                                        const transceiver = pc
+                                            .getTransceivers()
+                                            .find((t) => t.sender?.track === stream.current?.getVideoTracks()[0]);
+                                        if (transceiver && 'setCodecPreferences' in transceiver) {
+                                            const exactMatch: RTCRtpCodec[] = [];
+                                            const mimeMatch: RTCRtpCodec[] = [];
+                                            const others: RTCRtpCodec[] = [];
+                                            RTCRtpReceiver.getCapabilities('video')?.codecs.forEach((codec) => {
+                                                if (codec.mimeType === preferCodec.mimeType) {
+                                                    if (codec.sdpFmtpLine === preferCodec.sdpFmtpLine) {
+                                                        exactMatch.push(codec);
+                                                    } else {
+                                                        mimeMatch.push(codec);
+                                                    }
+                                                } else {
+                                                    others.push(codec);
+                                                }
+                                            });
+                                            transceiver.setCodecPreferences([...exactMatch, ...mimeMatch, ...others]);
+                                        }
+                                    }
+                                    const answer = await pc.createAnswer();
+                                    await pc.setLocalDescription(answer);
+                                    send({type: 'clientanswer', payload: {sid, value: answer}});
+                                } else {
+                                    // P2P mode (or SFU viewer): relay host's offer to the viewer PC.
+                                    await client.current[sid]?.setRemoteDescription(event.payload.value);
+                                    const answer = await client.current[sid]?.createAnswer();
+                                    await client.current[sid]?.setLocalDescription(answer);
+                                    send({type: 'clientanswer', payload: {sid, value: answer}});
+                                }
                             })();
                             return;
                         case 'hostice':
@@ -362,10 +420,16 @@ export const useRoom = (config: UIConfig): UseRoom => {
     };
 
     const stopShare = async () => {
-        Object.values(host.current).forEach((peer) => {
-            peer.close();
-        });
-        host.current = {};
+        if (hostSID.current) {
+            // SFU mode: only the upload PC exists in host.current.
+            host.current[hostSID.current]?.close();
+            delete host.current[hostSID.current];
+            hostSID.current = undefined;
+        } else {
+            // P2P mode: one host PC per viewer.
+            Object.values(host.current).forEach((peer) => peer.close());
+            host.current = {};
+        }
         stream.current?.getTracks().forEach((track) => track.stop());
         stream.current = undefined;
         conn.current?.send(JSON.stringify({type: 'stopshare', payload: {}}));

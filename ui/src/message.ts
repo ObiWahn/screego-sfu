@@ -41,6 +41,7 @@ export interface P2PSession {
     id: string;
     peer: string;
     iceServers: ICEServer[];
+    mode?: 'sfu'; // present only in hostsession when SCREEGO_SFU_MODE=true; absent means p2p
 }
 
 export interface ICEServer {

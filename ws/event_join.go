@@ -53,7 +53,20 @@ func (e *Join) Execute(rooms *Rooms, current ClientInfo) error {
 		if current.ID == user.ID || !user.Streaming {
 			continue
 		}
-		room.newSession(user.ID, current.ID, rooms, v4, v6)
+		if rooms.config.SFUMode {
+			h, ok := room.SFUHosts[user.ID]
+			if !ok {
+				continue
+			}
+			if h.Track != nil {
+				createViewerPC(room, rooms, user.ID, current.ID, v4, v6)
+			} else {
+				// Host PC exists but OnTrack hasn't fired yet; defer until the track arrives.
+				h.Pending = append(h.Pending, current.ID)
+			}
+		} else {
+			room.newSession(user.ID, current.ID, rooms, v4, v6)
+		}
 	}
 
 	return nil

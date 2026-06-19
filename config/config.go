@@ -55,6 +55,7 @@ type Config struct {
 
 	TrustProxyHeaders  bool     `split_words:"true"`
 	SFUMode            bool     `default:"false" split_words:"true"`
+	TestClient         bool     `default:"false" split_words:"true"`
 	AuthMode           string   `default:"turn" split_words:"true"`
 	CorsAllowedOrigins []string `split_words:"true"`
 	UsersFile          string   `split_words:"true"`

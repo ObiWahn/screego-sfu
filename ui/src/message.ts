@@ -84,6 +84,8 @@ export type StopShare = Typed<{}, 'stopshare'>;
 export type RoomCreate = Typed<RoomConfiguration & {joinIfExist?: boolean}, 'create'>;
 export type JoinRoom = Typed<JoinConfiguration, 'join'>;
 export type EndShare = Typed<string, 'endshare'>;
+export type Subscribe = Typed<{id: string}, 'subscribe'>;
+export type Unsubscribe = Typed<{id: string}, 'unsubscribe'>;
 
 export type IncomingMessage =
     | Room
@@ -105,4 +107,6 @@ export type OutgoingMessage =
     | HostOffer
     | StopShare
     | ClientAnswer
-    | StartSharing;
+    | StartSharing
+    | Subscribe
+    | Unsubscribe;

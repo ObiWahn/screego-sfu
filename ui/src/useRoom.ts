@@ -34,6 +34,8 @@ export interface UseRoom {
     share: () => void;
     setName: (name: string) => void;
     stopShare: () => void;
+    subscribeStream: (userID: string) => void;
+    unsubscribeStream: (sessionID: string) => void;
 }
 
 const relayConfig: Partial<RTCConfiguration> =
@@ -165,6 +167,7 @@ export const useRoom = (config: UIConfig): UseRoom => {
     const conn = React.useRef<WebSocket | undefined>(undefined);
     const host = React.useRef<Record<string, RTCPeerConnection>>({});
     const client = React.useRef<Record<string, RTCPeerConnection>>({});
+    const clientPeerID = React.useRef<Record<string, string>>({});
     const stream = React.useRef<MediaStream>(undefined);
     const hostSID = React.useRef<string | undefined>(undefined); // SFU: session ID for the upload PC
 
@@ -247,12 +250,14 @@ export const useRoom = (config: UIConfig): UseRoom => {
                             return;
                         case 'clientsession':
                             const {id: sid, peer} = event.payload;
+                            clientPeerID.current[sid] = peer;
                             clientSession({
                                 sid,
                                 send,
                                 ice: event.payload.iceServers,
                                 done: () => {
                                     delete client.current[sid];
+                                    delete clientPeerID.current[sid];
                                     setState((current) =>
                                         current
                                             ? {
@@ -340,6 +345,7 @@ export const useRoom = (config: UIConfig): UseRoom => {
                         case 'endshare':
                             client.current[event.payload]?.close();
                             host.current[event.payload]?.close();
+                            delete clientPeerID.current[event.payload];
                             setState((current) =>
                                 current
                                     ? {
@@ -440,6 +446,25 @@ export const useRoom = (config: UIConfig): UseRoom => {
         conn.current?.send(JSON.stringify({type: 'name', payload: {username: name}}));
     };
 
+    const subscribeStream = React.useCallback((userID: string): void => {
+        conn.current?.send(JSON.stringify({type: 'subscribe', payload: {id: userID}}));
+    }, []);
+
+    const unsubscribeStream = React.useCallback((sessionID: string): void => {
+        const peerID = clientPeerID.current[sessionID];
+        client.current[sessionID]?.close();
+        delete client.current[sessionID];
+        delete clientPeerID.current[sessionID];
+        setState((current) =>
+            current
+                ? {...current, clientStreams: current.clientStreams.filter(({id}) => id !== sessionID)}
+                : current
+        );
+        if (peerID) {
+            conn.current?.send(JSON.stringify({type: 'unsubscribe', payload: {id: peerID}}));
+        }
+    }, []);
+
     React.useEffect(() => {
         if (roomID) {
             const create = getFromURL('create') === 'true';
@@ -465,5 +490,5 @@ export const useRoom = (config: UIConfig): UseRoom => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    return {state, room, share, stopShare, setName};
+    return {state, room, share, stopShare, setName, subscribeStream, unsubscribeStream};
 };

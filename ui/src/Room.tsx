@@ -61,11 +61,15 @@ export const Room = ({
     share,
     stopShare,
     setName,
+    subscribeStream,
+    unsubscribeStream,
 }: {
     state: ConnectedRoom;
     share: () => void;
     stopShare: () => void;
     setName: (name: string) => void;
+    subscribeStream: (userID: string) => void;
+    unsubscribeStream: (sessionID: string) => void;
 }) => {
     const {classes} = useStyles();
     const [open, setOpen] = React.useState(false);
@@ -99,6 +103,14 @@ export const Room = ({
             setSelectedStream(state.clientStreams[0]?.id);
         }
     }, [state.clientStreams, selectedStream, state.hostStream]);
+
+    React.useEffect(() => {
+        if (!showStrip) {
+            state.clientStreams
+                .filter((cs) => cs.id !== selectedStream)
+                .forEach((cs) => unsubscribeStream(cs.id));
+        }
+    }, [state.clientStreams, showStrip, selectedStream, unsubscribeStream]);
 
     const stream =
         selectedStream === HostStream
@@ -233,7 +245,13 @@ export const Room = ({
                         <Tooltip title="Deselect" arrow>
                             <IconButton
                                 size="small"
-                                onClick={() => { explicitDeselect.current = true; setSelectedStream(undefined); }}
+                                onClick={() => {
+                                    if (!showStrip && typeof selectedStream === 'string') {
+                                        unsubscribeStream(selectedStream);
+                                    }
+                                    explicitDeselect.current = true;
+                                    setSelectedStream(undefined);
+                                }}
                                 sx={{position: 'absolute', top: 8, right: 8, zIndex: 25, bgcolor: 'rgba(0,0,0,0.4)'}}
                             >
                                 <CloseIcon />
@@ -307,7 +325,27 @@ export const Room = ({
 
                         <Tooltip title={showStrip ? 'Hide stream list' : 'Show stream list'} arrow>
                             <IconButton
-                                onClick={() => setShowStrip((s) => !s)}
+                                onClick={() => {
+                                    if (showStrip) {
+                                        state.clientStreams
+                                            .filter((cs) => cs.id !== selectedStream)
+                                            .forEach((cs) => unsubscribeStream(cs.id));
+                                        setShowStrip(false);
+                                    } else {
+                                        const subscribedIDs = new Set(
+                                            state.clientStreams.map((cs) => cs.peer_id)
+                                        );
+                                        state.users
+                                            .filter(
+                                                (u) =>
+                                                    u.streaming &&
+                                                    !u.you &&
+                                                    !subscribedIDs.has(u.id)
+                                            )
+                                            .forEach((u) => subscribeStream(u.id));
+                                        setShowStrip(true);
+                                    }
+                                }}
                                 size="large"
                                 color={showStrip ? 'primary' : 'inherit'}
                             >

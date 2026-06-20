@@ -1,7 +1,10 @@
 package ws
 
 import (
+	"errors"
 	"fmt"
+
+	"github.com/screego/server/config"
 )
 
 func init() {
@@ -23,6 +26,10 @@ func (e *Join) Execute(rooms *Rooms, current ClientInfo) error {
 	room, ok := rooms.Rooms[e.ID]
 	if !ok {
 		return fmt.Errorf("room with id %s does not exist", e.ID)
+	}
+
+	if rooms.config.AuthMode == config.AuthModeAll && !current.Authenticated {
+		return errors.New("you need to login")
 	}
 	name := e.UserName
 	if current.Authenticated {

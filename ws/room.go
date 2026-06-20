@@ -192,6 +192,16 @@ type User struct {
 	_write    chan<- outgoing.Message
 }
 
+// sessionByPeers finds the session ID and session for a given (host, client) pair.
+func (r *Room) sessionByPeers(host, client xid.ID) (xid.ID, *RoomSession, bool) {
+	for id, s := range r.Sessions {
+		if s.Host == host && s.Client == client {
+			return id, s, true
+		}
+	}
+	return xid.ID{}, nil, false
+}
+
 func (u *User) WriteTimeout(msg outgoing.Message) {
 	writeTimeout(u._write, msg)
 }
